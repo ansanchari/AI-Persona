@@ -4,7 +4,7 @@ import logging
 import requests
 import numpy as np
 from datetime import datetime, timedelta  # <--- ONE clean import for datetime!
-from typing import TypedDict, List
+from typing import TypedDict, List, Any, Dict
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -276,12 +276,38 @@ class ChatRequest(BaseModel):
     message: str
 
 @app.post("/chat")
-async def chat_endpoint(request: ChatRequest):
+async def chat_endpoint(request: Dict[Any, Any]): # Accepts ANY JSON dictionary
     try:
-        initial_state = {"messages": [{"role": "user", "content": request.message}], "context": "", "intent": ""}
+        
+        user_message = ""
+        
+        if "message" in request and isinstance(request["message"], str):
+            user_message = request["message"]
+            
+        elif "message" in request and "text" in request["message"]:
+             user_message = request["message"]["text"]
+             
+        elif "message" in request and "toolCalls" in request["message"]:
+            user_message = str(request["message"])
+            
+        else:
+            user_message = str(request)
+
+        initial_state = {"messages": [{"role": "user", "content": user_message}], "context": "", "intent": ""}
         final_state = app_graph.invoke(initial_state)
         
         ai_response = get_latest_message_content(final_state)
-        return {"response": ai_response, "intent_detected": final_state["intent"]}
+        
+        return {
+            "results": [
+                {
+                    "toolCallId": request.get("message", {}).get("toolCalls", [{}])[0].get("id", "default_id"),
+                    "result": ai_response
+                }
+            ],
+            "response": ai_response, 
+            "intent_detected": final_state["intent"]
+        }
     except Exception as e:
+        print(f"Server Error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
