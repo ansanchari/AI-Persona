@@ -1,0 +1,11 @@
+**/__pycache__/
+*.pyc
+
+**/.env
+**/venv/
+
+**/credentials.json
+**/token.json
+
+**/node_modules/
+**/.next/
