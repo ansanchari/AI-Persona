@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 import logging
 import requests
 import numpy as np
@@ -36,7 +37,6 @@ class AgentState(TypedDict):
     context: str
 
 def get_latest_message_content(state: AgentState) -> str:
-    """Safely extracts text content from the last message in the state."""
     if not state.get("messages"):
         return ""
     last_msg = state["messages"][-1]
@@ -61,8 +61,19 @@ def router_node(state: AgentState):
     - If you are unsure between categories, ALWAYS default to 'rag'.
     - Respond with ONLY the intent word in lowercase ('rag', 'calendar', or 'general'). Do not add punctuation, spaces, or explanations."""
 
-    response = llm.invoke(prompt)
-    raw_intent = response.content.strip().lower()
+    raw_intent = "rag"
+    for attempt in range(3):
+        try:
+            response = llm.invoke(prompt)
+            raw_intent = response.content.strip().lower()
+            break
+        except Exception as e:
+            if "429" in str(e) and attempt < 2:
+                time.sleep(1.5 * (attempt + 1))
+                continue
+            else:
+                logging.error(f"Router hit unresolvable error or strict 429: {e}")
+                break
     
     if "calendar" in raw_intent:
         intent = "calendar"
@@ -95,7 +106,7 @@ def rag_node(state: AgentState) -> dict:
         search_response = qdrant_client.query_points(
             collection_name="my_persona_data",
             query=query_vector,
-            limit=20  # Pull a wide net for Cohere to sort
+            limit=20
         )
         retrieved_chunks = [hit.payload.get("text", "") for hit in search_response.points if hit.payload]
     except Exception as e:
@@ -148,8 +159,20 @@ def calendar_node(state: AgentState):
         - If YES: Output ONLY the requested date/time in strict ISO 8601 format (YYYY-MM-DDTHH:MM:SS).
         - If NO: Output exactly "NONE".
         """
-        response = llm.invoke(extract_prompt)
-        extracted_time = response.content.strip()
+        
+        extracted_time = "NONE"
+        for attempt in range(3):
+            try:
+                response = llm.invoke(extract_prompt)
+                extracted_time = response.content.strip()
+                break
+            except Exception as e:
+                if "429" in str(e) and attempt < 2:
+                    time.sleep(1.5 * (attempt + 1))
+                    continue
+                else:
+                    logging.error(f"Calendar extraction encountered 429 rate limit: {e}")
+                    break
 
         if "NONE" in extracted_time.upper():
             now_utc = datetime.utcnow().isoformat() + 'Z'
@@ -178,7 +201,7 @@ def calendar_node(state: AgentState):
                     'end': {'dateTime': end_time.isoformat(), 'timeZone': 'Asia/Kolkata'},
                     'conferenceData': {
                         'createRequest': {
-                            'requestId': f"interview-{start_time.timestamp()}" # Requires a unique ID
+                            'requestId': f"interview-{start_time.timestamp()}" 
                         }
                     }
                 }
@@ -235,9 +258,21 @@ def generate_node(state: AgentState):
 
     print(f"DEBUG: FINAL PROMPT SENT TO LLM: {messages_for_llm}")
     
-    response = llm.invoke(messages_for_llm)
+    response_content = "I'm experiencing a slightly high network volume right now. Could you please say or type that one more time?"
+    for attempt in range(3):
+        try:
+            response = llm.invoke(messages_for_llm)
+            response_content = response.content
+            break
+        except Exception as e:
+            if "429" in str(e) and attempt < 2:
+                time.sleep(1.5 * (attempt + 1))
+                continue
+            else:
+                logging.error(f"Generation node completely rate limited: {e}")
+                break
     
-    return {"messages": [{"role": "assistant", "content": response.content}]}
+    return {"messages": [{"role": "assistant", "content": response_content}]}
 
 workflow = StateGraph(AgentState)
 
@@ -266,7 +301,7 @@ app = FastAPI(title="Sanchari's AI Persona Backend")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"], 
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -276,9 +311,8 @@ class ChatRequest(BaseModel):
     message: str
 
 @app.post("/chat")
-async def chat_endpoint(request: Dict[Any, Any]): # Accepts ANY JSON dictionary
+async def chat_endpoint(request: Dict[Any, Any]): 
     try:
-        
         user_message = ""
         
         if "message" in request and isinstance(request["message"], str):
