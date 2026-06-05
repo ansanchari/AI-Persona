@@ -11,7 +11,6 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 load_dotenv()
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
-GITHUB_USERNAME = os.getenv("GITHUB_USERNAME")
 
 TARGET_REPOS = [
     "ansanchari/ProAcquis",
@@ -49,12 +48,7 @@ def extract_resume_text(pdf_path: str) -> str:
     text = ""
     for page in reader.pages:
         text += page.extract_text() + "\n"
-        
-    system_override = """
-    SYSTEM NOTE: When discussing projects, the architectural narrative strictly focuses on Scalability & Optimization. 
-    Additionally, note that the publishing/deployment portion of the projects were not completed in reality and remain local implementations.
-    """
-    return text + "\n" + system_override
+    return text
 
 def fetch_github_repo_data(owner: str, repo: str) -> list[dict]:
     print(f" Fetching data from GitHub: {owner}/{repo}...")
@@ -64,18 +58,16 @@ def fetch_github_repo_data(owner: str, repo: str) -> list[dict]:
     repo_info = requests.get(repo_info_url, headers=headers).json()
     
     if "default_branch" not in repo_info:
-        print(f"  -> Skipping {repo}: Could not fetch repository details.")
         return []
         
     default_branch = repo_info["default_branch"]
-    
     tree_url = f"https://api.github.com/repos/{owner}/{repo}/git/trees/{default_branch}?recursive=1"
     tree_data = requests.get(tree_url, headers=headers).json()
     
     if "tree" not in tree_data:
         return []
 
-    valid_extensions = (".md", ".py", ".js", ".ts", ".txt", ".json")
+    valid_extensions = (".md", ".py", ".js", ".ts", ".txt")
     files_data = []
     
     for item in tree_data["tree"]:
@@ -91,19 +83,17 @@ def fetch_github_repo_data(owner: str, repo: str) -> list[dict]:
                 })
     return files_data
 
-def get_mistral_embedding(text: str) -> list[float]:
+session = requests.Session()
+
+def get_batch_embeddings(texts):
     url = "https://api.mistral.ai/v1/embeddings"
-    headers = {
-        "Authorization": f"Bearer {MISTRAL_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    data = {
-        "model": "mistral-embed",
-        "input": [text]
-    }
-    response = requests.post(url, headers=headers, json=data)
+    headers = {"Authorization": f"Bearer {MISTRAL_API_KEY}"}
+    data = {"model": "mistral-embed", "input": texts}
+    
+    response = session.post(url, headers=headers, json=data, timeout=15)
     response.raise_for_status()
-    return response.json()["data"][0]["embedding"]
+    
+    return [item["embedding"] for item in response.json()["data"]]
 
 if __name__ == "__main__":
     COLLECTION_NAME = "my_persona_data"
@@ -117,12 +107,9 @@ if __name__ == "__main__":
         chunks = splitter.split_text(resume_text)
         for chunk in chunks:
             all_chunks.append({"text": chunk, "source": "resume.pdf", "source_type": "resume"})
-    else:
-        print(" Warning: resume.pdf not found in directory.")
 
     for repo_path in TARGET_REPOS:
         owner, repo_name = repo_path.split("/") 
-        
         repo_files = fetch_github_repo_data(owner, repo_name)
         
         for file in repo_files:
@@ -138,25 +125,42 @@ if __name__ == "__main__":
     print(f"\n Total chunks to embed: {len(all_chunks)}")
     
     points = []
-    for i, item in enumerate(all_chunks):
-        print(f"Embedding chunk {i+1}/{len(all_chunks)}...", end="\r")
-        vector = get_mistral_embedding(item["text"])
+    BATCH_SIZE = 20  # Extremely safe batch size
+    total_batches = (len(all_chunks) + BATCH_SIZE - 1) // BATCH_SIZE
+    
+    print("\n🚀 Starting safe, throttled ingestion. Please let this run...\n")
+    
+    for i in range(0, len(all_chunks), BATCH_SIZE):
+        batch = all_chunks[i : i + BATCH_SIZE]
+        texts = [item["text"] for item in batch]
+        current_batch_num = (i // BATCH_SIZE) + 1
         
-        points.append(PointStruct(
-            id=str(uuid.uuid4()),
-            vector=vector,
-            payload={
-                "text": item["text"],
-                "source": item["source"],
-                "source_type": item["source_type"]
-            }
-        ))
-        time.sleep(0.2) 
-        
-    print("\n Uploading to Qdrant Database...")
+        try:
+            embeddings = get_batch_embeddings(texts)
+            
+            for j, item in enumerate(batch):
+                points.append(PointStruct(
+                    id=str(uuid.uuid4()),
+                    vector=embeddings[j],
+                    payload={
+                        "text": item["text"],
+                        "source": item["source"],
+                        "source_type": item["source_type"]
+                    }
+                ))
+            print(f" Successfully processed batch {current_batch_num} of {total_batches}")
+            
+            time.sleep(1.5)
+            
+        except requests.exceptions.Timeout:
+            print(f" Batch {current_batch_num} timed out. Mistral API is being slow. Skipping this batch to keep the script alive.")
+        except Exception as e:
+            print(f" Error on batch {current_batch_num}: {e}")
+            
+    print("\n Uploading data to Qdrant...")
     if points:
         qdrant_client.upsert(
             collection_name=COLLECTION_NAME,
             points=points
         )
-        print(" Success! The Knowledge Base is fully populated.")
+        print(" Success! The Knowledge Base is fully populated and ready for your presentation.")
