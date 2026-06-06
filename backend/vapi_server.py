@@ -83,6 +83,13 @@ async def vapi_chat_endpoint(request: Dict[Any, Any]):
     try:
         user_message, tool_call_id = extract_clean_voice_string(request)
 
+        topic_anchors = ["sanchari", "empathia", "imperial", "decryptor", "proacquis", "aura", "resume", "skill", "experience", "background", "project", "meeting", "calendar"]
+        is_on_topic = any(anchor in user_message.lower() for anchor in topic_anchors)
+    
+        if not is_on_topic:
+            return {
+                "results": [{"toolCallId": tool_call_id, "result": "I am specifically designed to discuss Sanchari's professional background and portfolio. Is there a project of hers I can tell you about?"}]
+            }
         print(f"\n [VAPI HEARD]: {user_message}")
         
         if any(kw in user_message.lower() for kw in ["book", "schedule", "meeting", "interview"]):
@@ -162,7 +169,7 @@ async def vapi_chat_endpoint(request: Dict[Any, Any]):
             system_prompt += f"\n\nAnswer using these facts:\n{context_str}"
 
         messages = [
-            {"role": "system", "content": system_prompt},
+            {"role": "system", "content": "You are Sanchari's AI Persona. You strictly discuss Sanchari's background... [rest of your prompt]"},
             {"role": "user", "content": user_message}
         ]
 
