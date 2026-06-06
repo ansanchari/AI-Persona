@@ -79,6 +79,7 @@ def extract_clean_voice_string(request: dict[str, Any]) -> tuple[str, str]:
 
 @app.post("/vapi-chat")
 async def vapi_chat_endpoint(request: Dict[Any, Any]):
+    print(f"\n👀 [RAW VAPI PAYLOAD]: {request}\n")
     try:
         user_message, tool_call_id = extract_clean_voice_string(request)
 
