@@ -37,32 +37,44 @@ except ImportError:
     print(" Vapi serving using standard Mistral Engine.")
 
 
-def extract_clean_voice_string(request: Dict[Any, Any]) -> tuple[str, str]:
-    user_message = ""
-    tool_call_id = "default_id"
+import json
+from typing import Any
+
+def extract_clean_voice_string(request: dict[str, Any]) -> tuple[str, str]:
+    """Safely extracts the user message and tool call ID from Vapi's webhook payload."""
     
-    if request.get("message", {}).get("type") == "tool-calls":
-        tool_calls = request["message"].get("toolCalls", [])
-        if tool_calls:
-            tool_call_id = tool_calls[0].get("id", "default_id")
-            arguments = tool_calls[0].get("function", {}).get("arguments", {})
-            if isinstance(arguments, str):
-                try:
-                    arguments = json.loads(arguments)
-                except json.JSONDecodeError:
-                    pass
-            if isinstance(arguments, dict):
-                user_message = arguments.get("message", str(arguments))
-            else:
-                user_message = str(arguments)
-    elif "message" in request and isinstance(request["message"], str):
-        user_message = request["message"]
-    elif "message" in request and "text" in request["message"]:
-        user_message = request["message"]["text"]
-    else:
-        user_message = str(request)
+    message = request.get("message", {})
+
+    if isinstance(message, dict) and message.get("type") == "tool-calls":
+        tool_calls = message.get("toolCalls", [])
         
-    return user_message, tool_call_id
+        if not tool_calls:
+            return "", "default_id"
+            
+        first_call = tool_calls[0]
+        tool_call_id = first_call.get("id", "default_id")
+        args = first_call.get("function", {}).get("arguments", {})
+
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except json.JSONDecodeError:
+                pass
+
+        if isinstance(args, dict):
+            user_message = args.get("message", str(args))
+        else:
+            user_message = str(args)
+            
+        return user_message, tool_call_id
+
+    if isinstance(message, str):
+        return message, "default_id"
+
+    if isinstance(message, dict) and "text" in message:
+        return message["text"], "default_id"
+
+    return str(request), "default_id"
 
 
 @app.post("/vapi-chat")
