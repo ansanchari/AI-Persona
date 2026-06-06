@@ -271,12 +271,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.get("/")
+@app.api_route("/", methods=["GET", "HEAD"])
 async def root_health_check():
     return {
         "status": "alive", 
         "message": "Sanchari's AI Persona Backend is active and running."
     }
+
 
 class ChatRequest(BaseModel):
     message: str
