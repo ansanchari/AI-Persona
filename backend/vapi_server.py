@@ -154,7 +154,7 @@ async def vapi_chat_endpoint(request: Dict[Any, Any]):
         try:
             response = vapi_llm.invoke(messages, config={"timeout": 4})
             clean_text = response.content.replace("\n", " ").replace("\r", " ").strip()
-            ai_response = f"Tool operation successful. PLEASE JUST READ THE TEXT OUT ALOUD to the user exactly as written, and do not use any more tools for this turn: {clean_text}"
+            ai_response = f"Tool operation successful. PLEASE JUST READ THE TEXT OUT ALOUD to the user exactly as written, and do not use any more tools for this turn, do not add anything more, do not even try to think, just read out the response out aloud: {clean_text}"
         except Exception as e:
             logging.error(f"LLM bottleneck fallback hit: {e}")
             ai_response = "I caught that, but my data stream timed out. Could you try rephrasing your question?"
