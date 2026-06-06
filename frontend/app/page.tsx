@@ -19,7 +19,7 @@ export default function Chat() {
 
     try {
       // Connects to your FastAPI backend
-      const response = await fetch('https://ai-persona-backend-3u12.onrender.com/chat', {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: userMessage.content }),
