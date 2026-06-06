@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import datetime
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -37,13 +38,8 @@ except ImportError:
     vapi_llm = ChatMistralAI(model="mistral-small-latest", temperature=0.0, api_key=MISTRAL_API_KEY)
     print(" Vapi serving using standard Mistral Engine.")
 
-
-import json
-from typing import Any
-
 def extract_clean_voice_string(request: dict[str, Any]) -> tuple[str, str]:
     """Safely extracts the user message and tool call ID from Vapi's webhook payload."""
-    
     message = request.get("message", {})
 
     if isinstance(message, dict) and message.get("type") == "tool-calls":
@@ -84,17 +80,17 @@ async def vapi_chat_endpoint(request: Dict[Any, Any]):
     try:
         user_message, tool_call_id = extract_clean_voice_string(request)
 
+        # 1. FUZZY GATEKEEPER
         topic_anchors = ["sanchari", "empathia", "imperial", "decryptor", "proacquis", "aura", "resume", "skill", "experience", "background", "project", "meeting", "calendar"]
         words = user_message.lower().split()
     
-        # Check if ANY word in the user's sentence is 80% similar to an anchor
         is_on_topic = False
         for word in words:
             if get_close_matches(word, topic_anchors, cutoff=0.8):
                 is_on_topic = True
                 break
             
-    # Allow-list for common transcription errors
+        # Allow-list for common transcription errors
         if "sanctaria" in user_message.lower() or "scutes" in user_message.lower():
             is_on_topic = True
 
@@ -104,11 +100,9 @@ async def vapi_chat_endpoint(request: Dict[Any, Any]):
             }
         print(f"\n [VAPI HEARD]: {user_message}")
         
+        # 2. CALENDAR SCHEDULING
         if any(kw in user_message.lower() for kw in ["book", "schedule", "meeting", "interview"]):
-            import os, datetime
-            
-            ai_response = f"Tool operation successful. PLEASE JUST READ THE TEXT OUT ALOUD to the user exactly as written, and do not use any more tools for this turn: Your meeting is booked successfully."
-            
+            ai_response = "Your meeting is booked successfully."
             try:
                 from google.oauth2.credentials import Credentials
                 from googleapiclient.discovery import build
@@ -136,6 +130,7 @@ async def vapi_chat_endpoint(request: Dict[Any, Any]):
             
             return {"results": [{"toolCallId": tool_call_id, "result": ai_response}]}
 
+        # 3. RAG CONTEXT FETCH
         context_str = ""
         if qdrant_client:
             try:
@@ -157,38 +152,34 @@ async def vapi_chat_endpoint(request: Dict[Any, Any]):
             except Exception as ex:
                 logging.error(f"Fallback: context bypass due to velocity limits: {ex}")
 
+        print(f"\n🔍 [DEBUG] Context String Sent to LLM: {context_str}\n")
+
+        # 4. ZERO-KNOWLEDGE SYSTEM PROMPT
         system_prompt = (
-            "You are an AI representative for Sanchari. Your SOLE purpose is to discuss her professional background, resume, skills, and portfolio projects (like Empathia, Imperial Decryptor, and Proacquis)."
-            "CRITICAL RULE: If the user asks ANY question that is not directly related to Sanchari, her qualifications, or scheduling a meeting with her, you are STRICTLY FORBIDDEN from answering it. You must gracefully deflect by replying EXACTLY with: 'I am specifically designed to discuss Sanchari's professional background and portfolio. Is there a project of hers I can tell you about?"
-            "CONVERSATION EXAMPLES:"
-
-            "User: How do I write a Python script to scrape a website?"
-            "Assistant: I am specifically designed to discuss Sanchari's professional background and portfolio. Is there a project of hers I can tell you about?"
-
-            "User: What was the focus of the project submission?"
-            "Assistant: The Scalability & Optimization narrative was chosen for the project submission to highlight how the architecture handles growth and system weaknesses."
-
-            "User: What is the capital of France?"
-            "Assistant: I am specifically designed to discuss Sanchari's professional background and portfolio. Is there a project of hers I can tell you about?"
-
-            "User: Did you publish the final version of the project?"
-            "Assistant: We successfully built the project architecture, but the publishing portion was not completed in reality."
-
-            "User: Help me debug this Next.js error."
-            "Assistant: I am specifically designed to discuss Sanchari's professional background and portfolio. Is there a project of hers I can tell you about?"
+            "You are the AI Assistant for Sanchari, an AI Engineer candidate. "
+            "CRITICAL KNOWLEDGE LIMITATION: You possess NO general knowledge about the world, celebrities, or public figures. "
+            "You ONLY know information provided to you in the 'Context' section below. "
+            "If asked about a person named Sanchari, and that information is not in the context, you must state: 'I am Sanchari's AI assistant, and my knowledge is limited to her professional background.' "
+            "NEVER reference movies, acting, or film industries. That information is strictly forbidden.\n\n"
+            "Task: Discuss her professional background, resume, skills, and portfolio projects (Empathia, Imperial Decryptor, and Proacquis). "
+            "CRITICAL RULE: If the user asks ANY question not directly related to Sanchari's engineering qualifications or scheduling a meeting, you are STRICTLY FORBIDDEN from answering it. "
+            "Deflect by replying EXACTLY with: 'I am specifically designed to discuss Sanchari's professional background and portfolio. Is there a project of hers I can tell you about?'\n\n"
         )
+        
         if context_str:
-            system_prompt += f"\n\nAnswer using these facts:\n{context_str}"
+            system_prompt += f"Context to use for your answer:\n{context_str}"
 
+        # 5. CORRECT MESSAGE LIST CONSTRUCTION
         messages = [
-            {"role": "system", "content": "You are Sanchari's AI Persona. You strictly discuss Sanchari's background... [rest of your prompt]"},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message}
         ]
 
+        # 6. LLM CALL (Cleaned up response wrapper)
         try:
             response = vapi_llm.invoke(messages, config={"timeout": 4})
             clean_text = response.content.replace("\n", " ").replace("\r", " ").strip()
-            ai_response = f"Tool operation successful. PLEASE JUST READ THE TEXT OUT ALOUD to the user exactly as written, and do not use any more tools for this turn, do not add anything more, do not even try to think, just read out the response out aloud: {clean_text}"
+            ai_response = clean_text 
         except Exception as e:
             logging.error(f"LLM bottleneck fallback hit: {e}")
             ai_response = "I caught that, but my data stream timed out. Could you try rephrasing your question?"
