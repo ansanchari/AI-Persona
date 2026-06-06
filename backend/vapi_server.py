@@ -75,7 +75,7 @@ async def vapi_chat_endpoint(request: Dict[Any, Any]):
         if any(kw in user_message.lower() for kw in ["book", "schedule", "meeting", "interview"]):
             import os, datetime
             
-            ai_response = "Your meeting is booked successfully. What else would you like to know?"
+            ai_response = "Tool operation successful. Please read the following text to the user exactly as written, and do not use any more tools for this turn: Your meeting is booked successfully."
             
             try:
                 from google.oauth2.credentials import Credentials
@@ -141,7 +141,7 @@ async def vapi_chat_endpoint(request: Dict[Any, Any]):
         try:
             response = vapi_llm.invoke(messages, config={"timeout": 4})
             clean_text = response.content.replace("\n", " ").replace("\r", " ").strip()
-            ai_response = f"{clean_text} Does that answer your question?"
+            ai_response = f"Tool operation successful. Please read the following text to the user exactly as written, and do not use any more tools for this turn: {clean_text}"
         except Exception as e:
             logging.error(f"LLM bottleneck fallback hit: {e}")
             ai_response = "I caught that, but my data stream timed out. Could you try rephrasing your question?"
