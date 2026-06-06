@@ -3,6 +3,7 @@ import sys
 import time
 import logging
 import requests
+import json
 import numpy as np
 from datetime import datetime, timedelta  # <--- ONE clean import for datetime!
 from typing import TypedDict, List, Any, Dict
@@ -314,16 +315,31 @@ class ChatRequest(BaseModel):
 async def chat_endpoint(request: Dict[Any, Any]): 
     try:
         user_message = ""
+        tool_call_id = "default_id"
         
-        if "message" in request and isinstance(request["message"], str):
+        if request.get("message", {}).get("type") == "tool-calls":
+            tool_calls = request["message"].get("toolCalls", [])
+            if tool_calls:
+                tool_call_id = tool_calls[0].get("id", "default_id")
+                arguments = tool_calls[0].get("function", {}).get("arguments", {})
+                
+                if isinstance(arguments, str):
+                    try:
+                        arguments = json.loads(arguments)
+                    except json.JSONDecodeError:
+                        pass
+                        
+                if isinstance(arguments, dict):
+                    user_message = arguments.get("message", str(arguments))
+                else:
+                    user_message = str(arguments)
+
+        elif "message" in request and isinstance(request["message"], str):
             user_message = request["message"]
             
         elif "message" in request and "text" in request["message"]:
              user_message = request["message"]["text"]
              
-        elif "message" in request and "toolCalls" in request["message"]:
-            user_message = str(request["message"])
-            
         else:
             user_message = str(request)
 
@@ -335,7 +351,7 @@ async def chat_endpoint(request: Dict[Any, Any]):
         return {
             "results": [
                 {
-                    "toolCallId": request.get("message", {}).get("toolCalls", [{}])[0].get("id", "default_id"),
+                    "toolCallId": tool_call_id,
                     "result": ai_response
                 }
             ],
