@@ -74,12 +74,13 @@ def extract_clean_voice_string(request: dict[str, Any]) -> tuple[str, str]:
     return str(request), "default_id"
 
 
-@app.get("/")
+@app.api_route("/", methods=["GET", "HEAD"])
 async def root_health_check():
     return {
         "status": "alive", 
         "message": "Sanchari's AI Persona Backend is active and running."
     }
+
 
 @app.post("/vapi-chat")
 async def vapi_chat_endpoint(request: Dict[Any, Any]):
